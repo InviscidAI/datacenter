@@ -1,0 +1,7 @@
+/backend/simulations
+/backend/venv
+/backend/__pycache__
+/backend/dist
+
+/frontend/dist
+/frontend/node_modules

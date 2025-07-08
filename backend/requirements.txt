@@ -1,0 +1,13 @@
+Flask
+Flask-Cors
+Pillow
+numpy
+opencv-python-headless
+torch
+torchvision
+transformers
+scikit-learn
+numpy-stl
+pyvista
+"trimesh[easy]"
+gunicorn
