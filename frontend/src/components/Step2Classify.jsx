@@ -119,7 +119,7 @@ export default function Step2Classify({ appState, setAppState, onNext, onBack, c
         }));
 
         try {
-            const response = await apiClient.post('http://localhost:5000/api/autofill', {
+            const response = await apiClient.post('/autofill', {
                 image_b64: appState.image.b64,
                 example_objects,
                 unclassified_contours: appState.unclassifiedContours

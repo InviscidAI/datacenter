@@ -17,7 +17,7 @@ function useSimulationStatus(runId) {
 
         const interval = setInterval(async () => {
             try {
-                const response = await apiClient.get(`http://localhost:5000/api/simulation-status/${runId}`);
+                const response = await apiClient.get(`/simulation-status/${runId}`);
                 if (response.data.status !== 'running') {
                     setStatus(response.data.status);
                     clearInterval(interval);

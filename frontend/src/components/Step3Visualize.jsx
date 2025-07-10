@@ -154,7 +154,7 @@ export default function Step3Visualize({ appState, setAppState, onNext, onBack, 
 
         // --- 3. Send to backend and update state ---
         try {
-            const response = await apiClient.post('http://localhost:5000/api/run-simulation', config);
+            const response = await apiClient.post('/run-simulation', config);
             const { run_id } = response.data;
 
             // Store runId AND the calculated KPIs in the global state
