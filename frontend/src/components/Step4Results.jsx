@@ -1,5 +1,5 @@
 import { useState, useEffect, Suspense } from 'react';
-import { Paper, Title, Button, Text, Center, Loader, SegmentedControl, Alert } from '@mantine/core';
+import { Paper, Title, Button, Text, Center, Loader, SegmentedControl, Alert, SimpleGrid, Divider } from '@mantine/core';
 import { IconAlertCircle } from '@tabler/icons-react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Environment, Html } from '@react-three/drei';
@@ -48,8 +48,21 @@ function CanvasLoader() {
   );
 }
 
+function KpiStat({ title, value, unit, description }) {
+    return (
+        <Paper withBorder p="md" radius="md">
+            <Text size="xs" c="dimmed" tt="uppercase">{title}</Text>
+            <Text fz="xl" fw={700}>
+                {value}
+                {unit && <Text span c="dimmed" fw={500} size="sm"> {unit}</Text>}
+            </Text>
+            {description && <Text fz="xs" c="dimmed" mt={4}>{description}</Text>}
+        </Paper>
+    );
+}
+
 export default function Step4Results({ appState, onReset }) {
-    const { runId } = appState;
+    const { runId, kpiResults } = appState;
     const status = useSimulationStatus(runId);
     const [view, setView] = useState('temperature');
     const modelUrl = `${API_BASE_URL}/api/get-result/${runId}/${view}.gltf`;
@@ -87,7 +100,7 @@ export default function Step4Results({ appState, onReset }) {
         return (
             <>
                 <Center>
-                    <SegmentedControl value={view} onChange={setView} data={['temperature', 'velocity']} mb="md" />
+                    <SegmentedControl value={view} onChange={setView} data={['temperature   ', 'velocity']} mb="md" />
                 </Center>
                 <Paper shadow="md" withBorder style={{ height: '60vh' }}>
                     <Canvas camera={{ position: [appState.room.width / 2, 5, appState.room.length * 1.5], fov: 50 }}>
@@ -99,6 +112,38 @@ export default function Step4Results({ appState, onReset }) {
                         <OrbitControls />
                     </Canvas>
                 </Paper>
+                {kpiResults && (
+                    <>
+                        <Divider my="xl" label="Efficiency Dashboard" labelPosition="center" />
+                        <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }}>
+                            <KpiStat
+                                title="Total Energy Consumption (EDC)"
+                                value={kpiResults.edc_kwh_year.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                                unit="kWh/yr"
+                                description="Total energy for IT and cooling systems."
+                            />
+                            <KpiStat
+                                title="Power Usage Effectiveness (PUE)"
+                                value={kpiResults.pue.toFixed(2)}
+                                unit=""
+                                description="Total Facility Power / IT Power"
+                            />
+                             <KpiStat
+                                title="Cooling Efficiency Ratio (CER)"
+                                value={kpiResults.cer.toFixed(2)}
+                                unit=""
+                                description="Heat Removed / Cooling Energy"
+                            />
+                            <KpiStat
+                                title="Annual IT Power Cost"
+                                value={`$${kpiResults.spc_per_year.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                unit="/yr"
+                                description="Includes PUE in total cost calculation."
+                            />
+                        </SimpleGrid>
+                    </>
+                )}
+                {/* --- END: KPI Dashboard Section --- */}
                 <Center mt="xl">
                     <Button onClick={onReset} variant="light">Start New Simulation</Button>
                 </Center>

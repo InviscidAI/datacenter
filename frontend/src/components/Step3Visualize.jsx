@@ -17,17 +17,31 @@ function getBoundingBox(points) {
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
-function ThreeDScene({ objects, room, categories, pxToMeters, onObjectClick, selectedObjectId }) {
-    const roomCenter = { x: room.width / 2, y: room.length / 2 };
+function ThreeDScene({ objects, room, categories, pxToMeters, onObjectClick, selectedObjectId, roomContour }) {
+    const roomCenterMeters = { x: room.width / 2, y: room.length / 2 };
+    const roomOriginPx = useMemo(() => {
+        if (!roomContour) return { x: 0, y: 0, width: 0, height: 0 };
+        return getBoundingBox(roomContour.points);
+    }, [roomContour]);
 
     const objectMeshes = useMemo(() => objects.map(obj => {
         const bbox = getBoundingBox(obj.contour.points);
         const width = bbox.width * pxToMeters;
         const depth = bbox.height * pxToMeters;
         const height = obj.properties.height;
-        // Position relative to room center
-        const x = (bbox.x + bbox.width / 2) * pxToMeters - roomCenter.x;
-        const z = -((bbox.y + bbox.height / 2) * pxToMeters - roomCenter.y); // Y in 2D is Z in 3D, and inverted
+        
+        // MODIFIED: Calculate position relative to the room's origin
+        // Center of object in pixels, relative to a global (0,0) image corner
+        const objCenterX_px = bbox.x + bbox.width / 2;
+        const objCenterY_px = bbox.y + bbox.height / 2;
+        
+        // Now, make it relative to the room's top-left corner in pixels
+        const relativeX_px = objCenterX_px - roomOriginPx.x;
+        const relativeY_px = objCenterY_px - roomOriginPx.y;
+
+        // Convert to meters and position in 3D world (where the room floor is centered at the world origin)
+        const x = relativeX_px * pxToMeters - roomCenterMeters.x;
+        const z = -((relativeY_px * pxToMeters) - roomCenterMeters.y); // Y in 2D is Z in 3D, and inverted
         
         return (
             <group key={obj.id} position={[x, height / 2, z]} onClick={() => onObjectClick(obj.id)}>
@@ -38,12 +52,13 @@ function ThreeDScene({ objects, room, categories, pxToMeters, onObjectClick, sel
                         opacity={0.8}
                     />
                 </Box>
-                 <DreiText position={[0, height / 2 + 0.3, 0]} color="white" fontSize={0.2} anchorX="center" anchorY="middle">
+                <DreiText position={[0, height / 2 + 0.3, 0]} color="white" fontSize={0.2} anchorX="center" anchorY="middle">
                     {obj.category} {obj.id.split('_')[1]}
                 </DreiText>
             </group>
         );
-    }), [objects, room, categories, pxToMeters, onObjectClick, selectedObjectId]);
+    // MODIFIED: Add roomOriginPx to dependency array
+    }), [objects, room, categories, pxToMeters, onObjectClick, selectedObjectId, roomOriginPx, roomCenterMeters]);
 
     return (
         <Canvas camera={{ position: [0, 5, 10], fov: 60 }}>
@@ -60,6 +75,7 @@ function ThreeDScene({ objects, room, categories, pxToMeters, onObjectClick, sel
 export default function Step3Visualize({ appState, setAppState, onNext, onBack, categories, pxToMeters, resetApp }) {
     const [selectedObjectId, setSelectedObjectId] = useState(null);
     const [finalConfig, setFinalConfig] = useState(null);
+    const [electricityCost, setElectricityCost] = useState(0.12);
 
     const selectedObject = appState.objects.find(o => o.id === selectedObjectId);
 
@@ -73,53 +89,76 @@ export default function Step3Visualize({ appState, setAppState, onNext, onBack, 
     };
     
     const handleRunSimulation = async () => {
-        // 1. Create the final JSON structure
-        const racks = appState.objects
-            .filter(o => o.category === 'Data Rack')
-            .map(o => {
-                const bbox = getBoundingBox(o.contour.points);
-                return {
-                    name: `rack_${o.id.split('_')[1]}`,
-                    pos: [(bbox.x * pxToMeters), (bbox.y * pxToMeters), 0],
-                    dims: [bbox.width * pxToMeters, bbox.height * pxToMeters, o.properties.height],
-                    power_watts: o.properties.heat_load_btu * 0.293071, // Convert BTU/hr to Watts
-                };
-            });
+        // --- 1. KPI Calculations ---
+        const BTU_PER_HR_TO_KW = 0.000293071;
+        const HOURS_PER_YEAR = 8760;
 
-        const cracs = appState.objects
-            .filter(o => o.category === 'CRAC')
-            .map(o => {
-                const bbox = getBoundingBox(o.contour.points);
-                return {
-                    name: `crac_${o.id.split('_')[1]}`,
-                    pos: [(bbox.x * pxToMeters), (bbox.y * pxToMeters), 0],
-                    dims: [bbox.width * pxToMeters, bbox.height * pxToMeters, o.properties.height],
-                    supply_velocity: 2.0, // Default value from your python script
-                    supply_temp_K: o.properties.supply_temp_c + 273.15,
-                };
-            });
+        const racks = appState.objects.filter(o => o.category === 'Data Rack');
+        const cracs = appState.objects.filter(o => o.category === 'CRAC');
+
+        // Total power consumed by IT equipment (in kW)
+        const totalITPower_kW = racks.reduce((sum, rack) => sum + (rack.properties.heat_load_btu * BTU_PER_HR_TO_KW), 0);
+
+        // Total power consumed by cooling equipment (in kW)
+        const totalCoolingPower_kW = cracs.reduce((sum, crac) => sum + crac.properties.power_consumption_kw, 0);
+
+        // Total facility power is IT + Cooling. (Simplification: ignores lighting, etc.)
+        const totalFacilityPower_kW = totalITPower_kW + totalCoolingPower_kW;
+
+        // Calculate KPIs
+        const pue = totalITPower_kW > 0 ? totalFacilityPower_kW / totalITPower_kW : 0;
+        const cer = totalCoolingPower_kW > 0 ? totalITPower_kW / totalCoolingPower_kW : 0; // Heat removed / cooling energy
+        const edc_kwh_year = totalFacilityPower_kW * HOURS_PER_YEAR;
+        const spc_per_year = totalITPower_kW * HOURS_PER_YEAR * pue * electricityCost;
+        
+        const kpiResults = {
+            edc_kwh_year,
+            pue,
+            cer,
+            spc_per_year
+        };
+
+        // --- 2. Create the final simulation JSON structure ---
+        const roomBbox = appState.room.contour ? getBoundingBox(appState.room.contour.points) : { x: 0, y: 0 };
+        const sim_racks = racks.map(o => {
+            const bbox = getBoundingBox(o.contour.points);
+            return {
+                name: `rack_${o.id.split('_')[1]}`,
+                pos: [(bbox.x - roomBbox.x) * pxToMeters, (bbox.y - roomBbox.y) * pxToMeters, 0],
+                dims: [bbox.width * pxToMeters, bbox.height * pxToMeters, o.properties.height],
+                power_watts: o.properties.heat_load_btu * 0.293071,
+            };
+        });
+
+        const sim_cracs = cracs.map(o => {
+            const bbox = getBoundingBox(o.contour.points);
+            return {
+                name: `crac_${o.id.split('_')[1]}`,
+                pos: [(bbox.x - roomBbox.x) * pxToMeters, (bbox.y - roomBbox.y) * pxToMeters, 0],
+                dims: [bbox.width * pxToMeters, bbox.height * pxToMeters, o.properties.height],
+                supply_velocity: 2.0,
+                supply_temp_K: o.properties.supply_temp_c + 273.15,
+            };
+        });
         
         const config = {
             room: { dims: [appState.room.width, appState.room.length, appState.room.height] },
-            racks,
-            cracs,
+            racks: sim_racks,
+            cracs: sim_cracs,
             physics: {
-                crac_supply_temp_K: appState.objects
-                    .find(o => o.category === 'CRAC')?.properties.supply_temp_c + 273.15 || 285.15,
+                crac_supply_temp_K: cracs.length > 0 ? cracs[0].properties.supply_temp_c + 273.15 : 285.15,
             },
-            // Add other physics/meshing params from your original script if needed
         };
         
         setFinalConfig(config);
 
-        // 2. Send to backend
+        // --- 3. Send to backend and update state ---
         try {
             const response = await apiClient.post('http://localhost:5000/api/run-simulation', config);
-            console.log("received response")
             const { run_id } = response.data;
 
-            // Store the runId and move to the next step
-            setAppState(prev => ({ ...prev, runId: run_id }));
+            // Store runId AND the calculated KPIs in the global state
+            setAppState(prev => ({ ...prev, runId: run_id, kpiResults }));
             onNext();
         } catch (error) {
             console.error("Failed to run simulation:", error);
@@ -137,6 +176,7 @@ export default function Step3Visualize({ appState, setAppState, onNext, onBack, 
                         pxToMeters={pxToMeters}
                         onObjectClick={setSelectedObjectId}
                         selectedObjectId={selectedObjectId}
+                        roomContour={appState.room.contour}
                     />
                 </Paper>
             </Grid.Col>
@@ -149,6 +189,16 @@ export default function Step3Visualize({ appState, setAppState, onNext, onBack, 
                        <NumberInput label="Height (m)" value={appState.room.height} onChange={v => setAppState(p=>({...p, room: {...p.room, height:v}}))} />
                     </SimpleGrid>
 
+                    <Title order={4} mt="xl">Global Settings</Title>
+                    <NumberInput
+                        label="Electricity Cost ($/kWh)"
+                        value={electricityCost}
+                        onChange={setElectricityCost}
+                        precision={3}
+                        step={0.01}
+                        mt="sm"
+                    />
+
                     <Title order={4} mt="xl">Object Properties</Title>
                     <Text size="sm" c="dimmed">Click on an object in the 3D view to edit.</Text>
 
@@ -158,7 +208,7 @@ export default function Step3Visualize({ appState, setAppState, onNext, onBack, 
                                {Object.entries(selectedObject.properties).map(([key, value]) => (
                                     <NumberInput 
                                         key={key}
-                                        label={key.replace(/_/g, ' ').replace('btu', '(BTU/hr)').replace(' c', ' (°C)')}
+                                        label={key.replace(/_/g, ' ').replace('btu', '(BTU/hr)')}
                                         value={value}
                                         onChange={(val) => handlePropertyChange(key, val)}
                                         precision={key === 'height' ? 2 : 0} // Better precision for different units

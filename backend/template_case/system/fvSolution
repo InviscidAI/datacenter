@@ -43,7 +43,8 @@ SIMPLE
 {
     momentumPredictor false;
     nNonOrthogonalCorrectors 0;
-
+    pRefCell    0;
+    pRefValue    0;
     residualControl
     {
         p_rgh           1e-6;

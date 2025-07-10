@@ -29,14 +29,17 @@ export default function Step1Upload({ setAppState, onNext }) {
         formData.append('file', file);
 
         try {
-            const response = await apiClient.post('http://localhost:5000/api/process-image', formData, {
+            const response = await apiClient.post('/process-image', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
             });
-            const { image_b64, contours } = response.data;
+            const { image_b64, contours, room_contour } = response.data;
+        
+            // MODIFIED: Set the room contour in the app state
             setAppState(prev => ({
                 ...prev,
                 image: { file, b64: image_b64, url: URL.createObjectURL(file) },
                 unclassifiedContours: contours,
+                room: { ...prev.room, contour: room_contour }
             }));
             onNext();
         } catch (err) {

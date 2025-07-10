@@ -16,7 +16,7 @@ function isPointInPolygon(point, polygon) {
     return inside;
 }
 
-function InteractiveCanvas({ imageSrc, unclassified, classified, onContourClick, categories }) {
+function InteractiveCanvas({ imageSrc, unclassified, classified, onContourClick, categories, roomContour }) {
     const canvasRef = useRef(null);
 
     useEffect(() => {
@@ -31,6 +31,19 @@ function InteractiveCanvas({ imageSrc, unclassified, classified, onContourClick,
             ctx.drawImage(img, 0, 0);
 
             // Draw unclassified contours
+            if (roomContour) {
+                ctx.strokeStyle = 'cyan'; // A distinct color for the room
+                ctx.lineWidth = 4;
+                ctx.lineJoin = 'round';
+                ctx.beginPath();
+                ctx.moveTo(roomContour.points[0][0], roomContour.points[0][1]);
+                for (let i = 1; i < roomContour.points.length; i++) {
+                    ctx.lineTo(roomContour.points[i][0], roomContour.points[i][1]);
+                }
+                ctx.closePath();
+                ctx.stroke();
+            }
+
             ctx.strokeStyle = 'magenta';
             ctx.lineWidth = 2;
             unclassified.forEach(({ points }) => {
@@ -57,7 +70,7 @@ function InteractiveCanvas({ imageSrc, unclassified, classified, onContourClick,
                 ctx.stroke();
             });
         };
-    }, [imageSrc, unclassified, classified, categories]);
+    }, [imageSrc, unclassified, classified, categories, roomContour]);
 
     const handleClick = (event) => {
         const canvas = canvasRef.current;
@@ -156,6 +169,7 @@ export default function Step2Classify({ appState, setAppState, onNext, onBack, c
                             classified={appState.objects}
                             onContourClick={handleContourClick}
                             categories={categories}
+                            roomContour={appState.room.contour}
                         />
                    )}
                 </Paper>

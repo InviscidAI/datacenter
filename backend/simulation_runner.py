@@ -50,11 +50,22 @@ def generate_stls_by_face(config, stl_dir):
             create_face_stl(os.path.join(stl_dir, f"{name}_right.stl"),  v[1], v[2], v[6], v[5])
 
 def generate_system_files(config, run_path):
+    """
+    Generates blockMeshDict, snappyHexMeshDict, and a dynamic fvSolution
+    to ensure robust meshing and solver setup.
+    """
     system_dir = os.path.join(run_path, "system")
     stl_dir = os.path.join(run_path, "constant/triSurface")
     rx, ry, rz = config['room']['dims']
     nx,ny,nz = config.get('meshing', {}).get('background_mesh_cells', (24,20,7))
     ref_level = config.get('meshing', {}).get('surface_refinement_level', 2)
+
+    # --- 1. Define a robust point in the center of the room ---
+    # This is much safer than a point near the corner (0.1*rx, etc.)
+    # as objects are less likely to be in the absolute center.
+    robust_location_point = f"({rx/2} {ry/2} {0.9*rz})"
+
+    # --- 2. Generate blockMeshDict ---
     bmd_content = f"""
 FoamFile {{ version 2.0; format ascii; class dictionary; object blockMeshDict; }}
 convertToMeters 1;
@@ -64,9 +75,11 @@ edges (); boundary (); mergePatchPairs ();
 """
     with open(os.path.join(system_dir, "blockMeshDict"), "w") as f: f.write(bmd_content)
 
+    # --- 3. Generate snappyHexMeshDict with the robust location ---
     all_stls = sorted(os.listdir(stl_dir))
     geometry_str = "".join([f'    {stl} {{ type triSurfaceMesh; name {os.path.splitext(stl)[0]}; }}\n' for stl in all_stls])
     ref_surfaces_str = "".join([f'        {os.path.splitext(stl)[0]} {{ level ({ref_level} {ref_level}); }}\n' for stl in all_stls if "room" not in stl])
+    
     sHMd_content = f"""
 FoamFile {{ version 2.0; format ascii; class dictionary; object snappyHexMeshDict; }}
 castellatedMesh   true; snap true; addLayers false; mergeTolerance 1E-6;
@@ -76,7 +89,7 @@ geometry {{
 castellatedMeshControls {{
     maxLocalCells 1000000; maxGlobalCells 5000000; minRefinementCells 10;
     maxLoadUnbalance 0.10; nCellsBetweenLevels 3; allowFreeStandingZoneFaces true;
-    locationInMesh ({rx*0.1} {ry*0.1} {rz*0.1});
+    locationInMesh {robust_location_point};
     features ();
     refinementSurfaces
     {{
@@ -84,16 +97,115 @@ castellatedMeshControls {{
     }}
     refinementRegions {{ }}; resolveFeatureAngle 30;
 }};
-snapControls {{ nSmoothPatch 3; tolerance 4.0; nSolveIter 30; nRelaxIter 5; }};
+snapControls {{
+    nSmoothPatch 5;
+    tolerance 4.0;
+    nSolveIter 100;
+    nRelaxIter 8;
+}};
 addLayersControls {{ relativeSizes true; layers {{ }}; expansionRatio 1.0; }};
 meshQualityControls {{
-    maxNonOrtho 65; maxBoundarySkewness 20; maxInternalSkewness 4; maxConcave 80;
-    minVol 1e-13; minTetQuality -1e30; minArea -1; minTwist 0.02; minDeterminant 0.001;
-    minFaceWeight 0.05; minVolRatio 0.01; minTriangleTwist -1; nSmoothScale 4; errorReduction 0.75;
-    relaxed {{ maxNonOrtho 75; }}
+    maxNonOrtho 70;
+    maxBoundarySkewness 20;
+    maxInternalSkewness 4;
+    maxConcave 180;
+    minVol 1e-13;
+    minTetQuality -1e30;
+    minArea -1;
+    minTwist 0.02;
+    minDeterminant 0.001;
+    minFaceWeight 0.05;
+    minVolRatio 0.01;
+    minTriangleTwist -1;
+    nSmoothScale 4;
+    errorReduction 0.75;
+    relaxed {{
+        maxNonOrtho 78;
+    }}
 }};
 """
     with open(os.path.join(system_dir, "snappyHexMeshDict"), "w") as f: f.write(sHMd_content)
+
+    # --- 4. Dynamically generate fvSolution with a robust pRefPoint ---
+    # This replaces the static template file and solves the fatal error.
+    fvSolution_content = f"""/*--------------------------------*- C++ -*----------------------------------*\\
+| =========                 |                                                 |
+| \\\\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\\\    /   O peration     | Version:  v2306                                 |
+|   \\\\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\\\/     M anipulation  |                                                 |
+\\*---------------------------------------------------------------------------*/
+FoamFile
+{{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvSolution;
+}}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+solvers
+{{
+    p_rgh
+    {{
+        solver          GAMG;
+        smoother        GaussSeidel;
+        tolerance       1e-8;
+        relTol          0.01;
+    }}
+
+    "(U|h|k|epsilon)"
+    {{
+        solver          PBiCGStab;
+        preconditioner  DILU;
+        tolerance       1e-7;
+        relTol          0.1;
+    }}
+
+    age
+    {{
+        $U;
+        relTol          0.001;
+    }}
+}}
+
+SIMPLE
+{{
+    momentumPredictor false;
+    nNonOrthogonalCorrectors 0;
+
+    // --- KEY CHANGE HERE ---
+    // Use pRefPoint with the same robust coordinate as locationInMesh.
+    // This is far more reliable than using pRefCell 0.
+    pRefPoint   {robust_location_point};
+    pRefValue   0;
+
+    residualControl
+    {{
+        p_rgh           1e-6;
+        U               1e-6;
+        h               1e-6;
+        "(k|epsilon)"   1e-6;
+    }}
+}}
+
+relaxationFactors
+{{
+    fields
+    {{
+        p_rgh           0.7;
+    }}
+
+    equations
+    {{
+        U               0.3;
+        h               0.3;
+        "(k|epsilon|R)" 0.7;
+        age             1;
+    }}
+}}
+// ************************************************************************* //
+"""
+    with open(os.path.join(system_dir, "fvSolution"), "w") as f: f.write(fvSolution_content)
 
 def generate_boundary_conditions(config, run_path):
     zero_dir = os.path.join(run_path, "0")
@@ -204,46 +316,99 @@ def convert_results_to_gltf(run_path):
         mesh_data = reader.read()['internalMesh']
         if mesh_data is None:
             raise Exception("Failed to read internalMesh from OpenFOAM results.")
-        
-        # Get room dimensions for centering the slice
-        bounds = mesh_data.bounds
-        center_x = (bounds[0] + bounds[1]) / 2
-        center_y = (bounds[2] + bounds[3]) / 2
-        center_z = (bounds[4] + bounds[5]) / 2
+        min_temp, max_temp = mesh_data.get_data_range('T')
 
-        # --- Temperature Slice Export ---
-        # Create a slice plane through the center of the mesh, normal to the Z-axis (a horizontal slice)
-        temp_slice = mesh_data.slice(normal='z', origin=(center_x, center_y, center_z))
-        
-        # Get the wireframe of the outer room for context
-        room_wireframe = mesh_data.extract_surface().extract_feature_edges()
+        original_slice = mesh_data.slice('z', origin=(0,0,1))
+        original_slice = original_slice.compute_normals(consistent_normals=True)
+        original_slice = original_slice.flip_faces()
 
-        plotter_temp = pv.Plotter(off_screen=True)
-        # Add the colored temperature slice
-        plotter_temp.add_mesh(temp_slice, cmap='coolwarm', scalars='T', scalar_bar_args={'title': 'Temperature (K)'})
-        # Add the room outline for context
-        plotter_temp.add_mesh(room_wireframe, color='white', style='wireframe')
-        plotter_temp.export_gltf(os.path.join(results_dir, 'temperature.gltf'))
-        plotter_temp.export_gltf(os.path.join(results_dir, 'velocity.gltf'))
+        boundary = reader.read()["boundary"]
+        surfs = []
+        for k in reader.read()["boundary"].keys():
+            if k!="defaultFaces":
+                surfs.append(boundary[k].extract_surface().flip_faces())
+
+        plotter_temp = pv.Plotter(off_screen=True, lighting='light_kit')
+        plotter_temp.add_mesh(
+            mesh_data.outline()
+        )
+        plotter_temp.add_mesh(
+            original_slice,
+            scalars='T',
+            lighting=False,
+            cmap='coolwarm',
+            clim=(min_temp, max_temp)
+        )
+        plotter_temp.add_mesh(
+            pv.merge(surfs),
+            scalars='T',
+            smooth_shading=True,
+            split_sharp_edges=True,
+            ambient=0.2,
+            cmap='coolwarm',
+            clim=(min_temp, max_temp)
+        )
+
+        mesh_data = reader.read()['internalMesh']
+        if mesh_data is None:
+            raise Exception("Failed to read internalMesh from OpenFOAM results.")
+        min_temp, max_temp = mesh_data.get_data_range('T')
+
+        original_slice = mesh_data.slice('z', origin=(0,0,1))
+        original_slice = original_slice.compute_normals(consistent_normals=True)
+        original_slice = original_slice.flip_faces()
+
+        boundary = reader.read()["boundary"]
+        surfs = []
+        for k in reader.read()["boundary"].keys():
+            if k!="defaultFaces":
+                surfs.append(boundary[k].extract_surface().flip_faces())
+
+        plotter_vel = pv.Plotter(off_screen=True, lighting='light_kit')
+        plotter_vel.add_mesh(
+            mesh_data.outline()
+        )
+
+        # slic = resampled_data.slice('z', origin=(cx,cy,cz))
+        # print(len(slic.points[::10]))
+        # streamlines = mesh_data.streamlines_from_source(
+        #     slic.points[::10]
+        # )
+        # plotter_vol.add_mesh(
+        #     streamlines.tube(radius=0.01), scalars='U'
+        # )
+        
+        
+
+        plotter_vel.add_mesh(
+            original_slice,
+            scalars='U',
+            lighting=False,
+        )
+
+        plotter_vel.add_mesh(
+            pv.merge(surfs),
+            color='w',
+            smooth_shading=True,
+            split_sharp_edges=True,
+            ambient=0.2,
+        )
+
+
+        # 4. Export the scene to GLTF.
+        # Per the user's request, use this same volumetric plot for both temperature and velocity views.
+        output_path_temp = os.path.join(results_dir, 'temperature.gltf')
+        output_path_vel = os.path.join(results_dir, 'velocity.gltf')
+        
+        plotter_temp.export_gltf(output_path_temp)
+        print(f"--> Volumetric temperature result saved to {output_path_temp}")
+        
+        # Simply copy the file for the velocity view.
+        plotter_vel.export_gltf(output_path_vel)
+        print(f"--> Copied volumetric plot for velocity view to {output_path_vel}")
+        
         plotter_temp.close()
-        print("--> Temperature slice results converted.")
-
-        # # --- Velocity Glyphs (Arrows) Export ---
-        # # Create a different slice for velocity to avoid clutter, this one vertical
-        # velocity_slice = mesh_data.slice(normal='y', origin=(center_x, center_y, center_z))
-
-        # # We can make the glyphs smaller and more numerous on a 2D slice
-        # velocity_glyphs = velocity_slice.glyph(orient='U', factor=0.05, geom=pv.Arrow(), scale="U")
-
-        # plotter_vel = pv.Plotter(off_screen=True)
-        # # Add the colored velocity arrows
-        # plotter_vel.add_mesh(velocity_glyphs, cmap='viridis', scalars='U', scalar_bar_args={'title': 'Velocity (m/s)'})
-        # # Add the room outline for context
-        # plotter_vel.add_mesh(room_wireframe, color='white', style='wireframe')
-        # plotter_vel.export_gltf(os.path.join(results_dir, 'velocity.gltf'))
-        # plotter_vel.close()
-        print("--> Velocity glyph results converted.")
-
+        plotter_vel.close()
         pv.close_all()
         print(f"--> All results converted to glTF in {results_dir}")
         return True

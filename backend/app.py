@@ -31,30 +31,59 @@ simulations_db = manager.dict()
 
 # --- 2. Core Computer Vision & AI Functions (from your reference code) ---
 
-def find_contours_from_image_bytes(image_bytes):
-    """Reads image bytes, finds contours, and returns them in a JSON-serializable format."""
+# REMOVED: find_contours_from_image_bytes
+
+# ADDED: find_room_and_objects_from_image_bytes
+def find_room_and_objects_from_image_bytes(image_bytes):
+    """
+    Reads image bytes, finds the room contour and object contours,
+    and returns them in a JSON-serializable format.
+    """
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
-    # Simple contour finding logic from your reference
+
+    h, w, _ = img.shape
+    total_area = h * w
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     _, thresh = cv2.threshold(gray, 225, 255, cv2.THRESH_BINARY_INV)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    
-    # Filter contours by area
+    all_contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Find room contour (largest contour, but not the whole image)
+    room_contour_raw = max((cnt for cnt in all_contours), key=cv2.contourArea, default=None)
+    if room_contour_raw is not None and cv2.contourArea(room_contour_raw) > total_area * 0.95:
+        room_contour_raw = None
+
+    # Serialize room contour
+    serializable_room_contour = None
+    if room_contour_raw is not None:
+        serializable_room_contour = {
+            "id": "room_0",
+            "points": room_contour_raw.squeeze().tolist()
+        }
+
+    # Filter object contours
     min_area, max_area = 50, 50000
-    object_contours = [cnt for cnt in contours if min_area < cv2.contourArea(cnt) < max_area]
-    
-    # Convert contours to a simple list of points for JSON
-    serializable_contours = []
+    object_contours = []
+    for cnt in all_contours:
+        is_object_size = min_area < cv2.contourArea(cnt) < max_area
+        is_not_room = True
+        if room_contour_raw is not None and np.array_equal(cnt, room_contour_raw):
+            is_not_room = False
+        
+        if is_object_size and is_not_room:
+            object_contours.append(cnt)
+
+    # Convert object contours to a simple list of points for JSON
+    serializable_object_contours = []
     for i, contour in enumerate(object_contours):
-        # Squeeze removes redundant dimensions
         points = contour.squeeze().tolist()
-        serializable_contours.append({
+        serializable_object_contours.append({
             "id": f"contour_{i}",
             "points": points
         })
-    return serializable_contours, img
+
+    return serializable_room_contour, serializable_object_contours, img
+
 
 def get_image_embedding(image_rgb, contour_points):
     """Crops an image based on a contour and gets its DINOv2 embedding."""
@@ -86,11 +115,14 @@ def process_image_endpoint():
     # Also return the image as base64 so frontend can display it without storing it
     image_base64 = base64.b64encode(image_bytes).decode('utf-8')
     
-    contours, _ = find_contours_from_image_bytes(image_bytes)
+    # MODIFIED: Use the new function
+    room_contour, object_contours, _ = find_room_and_objects_from_image_bytes(image_bytes)
 
+    # MODIFIED: Return the room contour as well
     return jsonify({
         "image_b64": image_base64,
-        "contours": contours
+        "contours": object_contours,
+        "room_contour": room_contour,
     })
 
 @app.route('/api/autofill', methods=['POST'])
