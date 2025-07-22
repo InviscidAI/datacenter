@@ -13,7 +13,17 @@ import multiprocessing
 import uuid
 from flask import send_from_directory
 from simulation_runner import run_openfoam_simulation
+from optimization_runner import run_binary_search_optimization, run_ga_optimization
+import json
 import os
+
+USE_MOCK_CHATBOT = True
+
+if USE_MOCK_CHATBOT:
+    from chatbot.mock_chatbot import MockChatBot as ChatBot
+else:
+    from chatbot.chatbot import ChatBot
+
 
 # --- 1. Model Loading & Global Setup ---
 print("Loading DINOv2 model...")
@@ -28,6 +38,8 @@ CORS(app)
 app.static_folder = 'dist/assets'
 manager = multiprocessing.Manager()
 simulations_db = manager.dict()
+chat_sessions = manager.dict()
+mock_chat_sessions_store = {}
 
 # --- 2. Core Computer Vision & AI Functions (from your reference code) ---
 
@@ -200,6 +212,78 @@ def run_simulation_endpoint():
     
     return jsonify({"message": "Simulation started", "run_id": run_id}), 202
 
+@app.route('/api/run-binary-search', methods=['POST'])
+def run_binary_search_endpoint():
+    """Endpoint to start a binary search optimization for CRAC temperature."""
+    config = request.json
+    run_id = str(uuid.uuid4())
+    process = multiprocessing.Process(
+        target=run_binary_search_optimization,
+        args=(config, run_id, simulations_db)
+    )
+    process.start()
+    simulations_db[run_id] = "running_optimization"
+    return jsonify({"message": "Binary search optimization started", "run_id": run_id}), 202
+
+@app.route('/api/run-ga-optimization', methods=['POST'])
+def run_ga_endpoint():
+    """Endpoint to start a genetic algorithm optimization for layout."""
+    config = request.json
+    run_id = str(uuid.uuid4())
+    process = multiprocessing.Process(
+        target=run_ga_optimization,
+        args=(config, run_id, simulations_db)
+    )
+    process.start()
+    simulations_db[run_id] = "running_optimization"
+    return jsonify({"message": "Genetic algorithm optimization started", "run_id": run_id}), 202
+
+# --- NEW: CHATBOT ENDPOINTS ---
+def get_chatbot_for_session(session_id):
+    """Creates or retrieves a chatbot instance for a given session ID."""
+    if USE_MOCK_CHATBOT:
+        if session_id not in mock_chat_sessions_store:
+            # The parameters don't matter for the mock bot
+            mock_chat_sessions_store[session_id] = ChatBot(None, None)
+        return mock_chat_sessions_store[session_id]
+    else:
+        # This is the original logic for the real VLLM chatbot
+        if session_id not in chat_sessions:
+            with open(os.path.join('chatbot', 'schema.json'), 'r', encoding='utf-8') as f:
+                schema = f.read()
+            bot = ChatBot('meta-llama/Llama-3.2-3B-Instruct', schema=schema, port=8000)
+            # Store the serializable message list, NOT the bot object itself
+            chat_sessions[session_id] = bot.messages
+        
+        # Re-create a bot instance and load its history for the current request
+        bot = ChatBot('meta-llama/Llama-3.2-3B-Instruct', schema="", port=8000)
+        bot.messages = chat_sessions[session_id]
+        return bot
+
+
+@app.route('/api/chat/send', methods=['POST'])
+def chat_endpoint():
+    data = request.json
+    session_id = data.get('session_id', str(uuid.uuid4()))
+    user_message = data.get('message')
+
+    if not user_message:
+        return jsonify({"error": "message is required"}), 400
+
+    bot = get_chatbot_for_session(session_id)
+    
+    response_content = bot.send_user_message(user_message, stream=False)
+    
+    # For the real bot, we need to save the updated message history
+    if not USE_MOCK_CHATBOT:
+        chat_sessions[session_id] = bot.messages
+
+    try:
+        parsed_response = json.loads(response_content)
+        return jsonify({"reply": parsed_response, "session_id": session_id})
+    except json.JSONDecodeError:
+        # This case is more for the real LLM which might not return perfect JSON
+        return jsonify({"reply": {"raw_text": response_content}, "session_id": session_id})
 
 @app.route('/api/simulation-status/<run_id>', methods=['GET'])
 def simulation_status_endpoint(run_id):
@@ -212,7 +296,7 @@ def simulation_status_endpoint(run_id):
 @app.route('/api/get-result/<run_id>/<filename>', methods=['GET'])
 def get_result_file(run_id, filename):
     """Serves the converted .gltf files."""
-    directory = os.path.abspath(os.path.join('simulations', run_id, 'results'))
+    directory = os.path.abspath(os.path.join('simulations', run_id))
     response = send_from_directory(directory, filename)
     response.headers["Access-Control-Allow-Origin"] = "*"
     return response

@@ -1,13 +1,15 @@
+// components/Step3Visualize.jsx
+
 import { useState, useMemo } from 'react';
-import { Grid, Paper, Title, Button, Group, Text, NumberInput, Code, ScrollArea, SimpleGrid, Center } from '@mantine/core';
+import { Grid, Paper, Title, Button, Group, Text, NumberInput, Select, SimpleGrid } from '@mantine/core';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Box, Text as DreiText } from '@react-three/drei';
-import axios from 'axios';
 import apiClient from '../api';
 
 // Helper to calculate bounding box from contour points
 function getBoundingBox(points) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    if (!points || points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
     points.forEach(([x, y]) => {
         minX = Math.min(minX, x);
         minY = Math.min(minY, y);
@@ -17,7 +19,7 @@ function getBoundingBox(points) {
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
-function ThreeDScene({ objects, room, categories, pxToMeters, onObjectClick, selectedObjectId, roomContour }) {
+export function ThreeDScene({ objects, room, categories, pxToMeters, onObjectClick, selectedObjectId, roomContour }) {
     const roomCenterMeters = { x: room.width / 2, y: room.length / 2 };
     const roomOriginPx = useMemo(() => {
         if (!roomContour) return { x: 0, y: 0, width: 0, height: 0 };
@@ -25,46 +27,67 @@ function ThreeDScene({ objects, room, categories, pxToMeters, onObjectClick, sel
     }, [roomContour]);
 
     const objectMeshes = useMemo(() => objects.map(obj => {
-        const bbox = getBoundingBox(obj.contour.points);
-        const width = bbox.width * pxToMeters;
-        const depth = bbox.height * pxToMeters;
-        const height = obj.properties.height;
-        
-        // MODIFIED: Calculate position relative to the room's origin
-        // Center of object in pixels, relative to a global (0,0) image corner
-        const objCenterX_px = bbox.x + bbox.width / 2;
-        const objCenterY_px = bbox.y + bbox.height / 2;
-        
-        // Now, make it relative to the room's top-left corner in pixels
-        const relativeX_px = objCenterX_px - roomOriginPx.x;
-        const relativeY_px = objCenterY_px - roomOriginPx.y;
+        // --- FIX: Declare variables that will be conditionally assigned ---
+        let width, depth, x, z;
+        const height = obj.properties?.height || 2.0; // Use optional chaining for safety
+        const uniqueKey = obj.id || obj.name;
 
-        // Convert to meters and position in 3D world (where the room floor is centered at the world origin)
-        const x = relativeX_px * pxToMeters - roomCenterMeters.x;
-        const z = -((relativeY_px * pxToMeters) - roomCenterMeters.y); // Y in 2D is Z in 3D, and inverted
+        // --- FIX: Conditionally determine position and dimensions based on object shape ---
+        if (obj.contour && obj.contour.points) {
+            // Case 1: Object is from initial classification (has a contour)
+            const bbox = getBoundingBox(obj.contour.points);
+            width = bbox.width * pxToMeters;
+            depth = bbox.height * pxToMeters;
+            
+            const objCenterX_px = bbox.x + bbox.width / 2;
+            const objCenterY_px = bbox.y + bbox.height / 2;
+            
+            const relativeX_px = objCenterX_px - roomOriginPx.x;
+            const relativeY_px = objCenterY_px - roomOriginPx.y;
+
+            x = relativeX_px * pxToMeters - roomCenterMeters.x;
+            z = -((relativeY_px * pxToMeters) - roomCenterMeters.y); // Y in 2D is Z in 3D, and inverted
+        } 
+        else if (obj.pos && obj.dims) {
+            // Case 2: Object is from a simulation config (what-if scenario)
+            width = obj.dims[0];
+            depth = obj.dims[1];
+            
+            // Position is already in meters relative to room corner (0,0).
+            // We just need to adjust it to be relative to the room center for the 3D scene.
+            const centerX = obj.pos[0] + width / 2;
+            const centerZ = obj.pos[1] + depth / 2; // In 2D config, Y is depth (our Z)
+
+            x = centerX - roomCenterMeters.x;
+            z = -(centerZ - roomCenterMeters.y); 
+        } 
+        else {
+            // If we can't determine the object's geometry, don't render it.
+            console.error("Cannot render object, it is missing 'contour' or 'pos/dims':", obj);
+            return null;
+        }
         
         return (
-            <group key={obj.id} position={[x, height / 2, z]} onClick={() => onObjectClick(obj.id)}>
+            <group key={uniqueKey} position={[x, height / 2, z]} onClick={() => onObjectClick(uniqueKey)}>
                 <Box args={[width, height, depth]} >
                     <meshStandardMaterial 
-                        color={obj.id === selectedObjectId ? 'yellow' : categories[obj.category]?.color || 'gray'} 
+                        color={uniqueKey === selectedObjectId ? 'yellow' : categories[obj.category]?.color || 'gray'} 
                         transparent 
                         opacity={0.8}
                     />
                 </Box>
                 <DreiText position={[0, height / 2 + 0.3, 0]} color="white" fontSize={0.2} anchorX="center" anchorY="middle">
-                    {obj.category} {obj.id.split('_')[1]}
+                    {obj.category} {(uniqueKey.split('_')[1] || '').substring(0, 4)}
                 </DreiText>
             </group>
         );
-    // MODIFIED: Add roomOriginPx to dependency array
     }), [objects, room, categories, pxToMeters, onObjectClick, selectedObjectId, roomOriginPx, roomCenterMeters]);
 
     return (
         <Canvas camera={{ position: [0, 5, 10], fov: 60 }}>
             <ambientLight intensity={0.6} />
             <directionalLight position={[10, 10, 5]} intensity={1} />
-            <gridHelper args={[room.width, room.width/2, 'gray', 'gray']} />
+            <gridHelper args={[room.width, Math.floor(room.width/2), 'gray', 'gray']} />
             <axesHelper args={[5]} />
             {objectMeshes}
             <OrbitControls />
@@ -72,10 +95,53 @@ function ThreeDScene({ objects, room, categories, pxToMeters, onObjectClick, sel
     );
 }
 
-export default function Step3Visualize({ appState, setAppState, onNext, onBack, categories, pxToMeters, resetApp }) {
+export function PropertyEditor({ object, onPropertyChange }) {
+    if (!object) {
+        return <Text mt="md" c="dimmed" align="center">No object selected</Text>;
+    }
+    
+    const faceOptions = ['x_min', 'x_max', 'y_min', 'y_max', 'z_min', 'z_max'];
+    const objectKey = object.id || object.name;
+
+    return (
+        <div key={objectKey}>
+            <Text weight={700} mt="md">{object.category} {objectKey.split('_')[1]}</Text>
+            {Object.entries(object.properties).map(([key, value]) => {
+                const label = key.replace(/_/g, ' ');
+                if (key.includes('face')) {
+                    return (
+                        <Select
+                            key={key}
+                            label={label}
+                            value={String(value)}
+                            onChange={(val) => onPropertyChange(key, val)}
+                            data={faceOptions}
+                            mt="xs"
+                        />
+                    );
+                }
+                if (typeof value === 'number') {
+                    return (
+                        <NumberInput
+                            key={key}
+                            label={label}
+                            value={Number(value)}
+                            onChange={(val) => onPropertyChange(key, val)}
+                            precision={3}
+                            step={0.1}
+                            mt="xs"
+                        />
+                    );
+                }
+                // Handle non-numeric, non-face properties if any
+                return <Text key={key}>{label}: {String(value)}</Text>;
+            })}
+        </div>
+    );
+}
+
+export default function Step3Visualize({ appState, setAppState, onNext, onBack, categories, pxToMeters, generateConfig }) {
     const [selectedObjectId, setSelectedObjectId] = useState(null);
-    const [finalConfig, setFinalConfig] = useState(null);
-    const [electricityCost, setElectricityCost] = useState(0.12);
 
     const selectedObject = appState.objects.find(o => o.id === selectedObjectId);
 
@@ -89,76 +155,13 @@ export default function Step3Visualize({ appState, setAppState, onNext, onBack, 
     };
     
     const handleRunSimulation = async () => {
-        // --- 1. KPI Calculations ---
-        const BTU_PER_HR_TO_KW = 0.000293071;
-        const HOURS_PER_YEAR = 8760;
-
-        const racks = appState.objects.filter(o => o.category === 'Data Rack');
-        const cracs = appState.objects.filter(o => o.category === 'CRAC');
-
-        // Total power consumed by IT equipment (in kW)
-        const totalITPower_kW = racks.reduce((sum, rack) => sum + (rack.properties.heat_load_btu * BTU_PER_HR_TO_KW), 0);
-
-        // Total power consumed by cooling equipment (in kW)
-        const totalCoolingPower_kW = cracs.reduce((sum, crac) => sum + crac.properties.power_consumption_kw, 0);
-
-        // Total facility power is IT + Cooling. (Simplification: ignores lighting, etc.)
-        const totalFacilityPower_kW = totalITPower_kW + totalCoolingPower_kW;
-
-        // Calculate KPIs
-        const pue = totalITPower_kW > 0 ? totalFacilityPower_kW / totalITPower_kW : 0;
-        const cer = totalCoolingPower_kW > 0 ? totalITPower_kW / totalCoolingPower_kW : 0; // Heat removed / cooling energy
-        const edc_kwh_year = totalFacilityPower_kW * HOURS_PER_YEAR;
-        const spc_per_year = totalITPower_kW * HOURS_PER_YEAR * pue * electricityCost;
+        const config = generateConfig(appState.objects, appState.room);
         
-        const kpiResults = {
-            edc_kwh_year,
-            pue,
-            cer,
-            spc_per_year
-        };
-
-        // --- 2. Create the final simulation JSON structure ---
-        const roomBbox = appState.room.contour ? getBoundingBox(appState.room.contour.points) : { x: 0, y: 0 };
-        const sim_racks = racks.map(o => {
-            const bbox = getBoundingBox(o.contour.points);
-            return {
-                name: `rack_${o.id.split('_')[1]}`,
-                pos: [(bbox.x - roomBbox.x) * pxToMeters, (bbox.y - roomBbox.y) * pxToMeters, 0],
-                dims: [bbox.width * pxToMeters, bbox.height * pxToMeters, o.properties.height],
-                power_watts: o.properties.heat_load_btu * 0.293071,
-            };
-        });
-
-        const sim_cracs = cracs.map(o => {
-            const bbox = getBoundingBox(o.contour.points);
-            return {
-                name: `crac_${o.id.split('_')[1]}`,
-                pos: [(bbox.x - roomBbox.x) * pxToMeters, (bbox.y - roomBbox.y) * pxToMeters, 0],
-                dims: [bbox.width * pxToMeters, bbox.height * pxToMeters, o.properties.height],
-                supply_velocity: 2.0,
-                supply_temp_K: o.properties.supply_temp_c + 273.15,
-            };
-        });
-        
-        const config = {
-            room: { dims: [appState.room.width, appState.room.length, appState.room.height] },
-            racks: sim_racks,
-            cracs: sim_cracs,
-            physics: {
-                crac_supply_temp_K: cracs.length > 0 ? cracs[0].properties.supply_temp_c + 273.15 : 285.15,
-            },
-        };
-        
-        setFinalConfig(config);
-
-        // --- 3. Send to backend and update state ---
         try {
             const response = await apiClient.post('/run-simulation', config);
             const { run_id } = response.data;
 
-            // Store runId AND the calculated KPIs in the global state
-            setAppState(prev => ({ ...prev, runId: run_id, kpiResults }));
+            setAppState(prev => ({ ...prev, runId: run_id }));
             onNext();
         } catch (error) {
             console.error("Failed to run simulation:", error);
@@ -189,37 +192,13 @@ export default function Step3Visualize({ appState, setAppState, onNext, onBack, 
                        <NumberInput label="Height (m)" value={appState.room.height} onChange={v => setAppState(p=>({...p, room: {...p.room, height:v}}))} />
                     </SimpleGrid>
 
-                    <Title order={4} mt="xl">Global Settings</Title>
-                    <NumberInput
-                        label="Electricity Cost ($/kWh)"
-                        value={electricityCost}
-                        onChange={setElectricityCost}
-                        precision={3}
-                        step={0.01}
-                        mt="sm"
-                    />
-
                     <Title order={4} mt="xl">Object Properties</Title>
                     <Text size="sm" c="dimmed">Click on an object in the 3D view to edit.</Text>
 
-                    {selectedObject ? (
-                        <div key={selectedObjectId}>
-                            <Text weight={700} mt="md">{selectedObject.category} {selectedObject.id.split('_')[1]}</Text>
-                               {Object.entries(selectedObject.properties).map(([key, value]) => (
-                                    <NumberInput 
-                                        key={key}
-                                        label={key.replace(/_/g, ' ').replace('btu', '(BTU/hr)')}
-                                        value={value}
-                                        onChange={(val) => handlePropertyChange(key, val)}
-                                        precision={key === 'height' ? 2 : 0} // Better precision for different units
-                                        step={key.includes('btu') ? 100 : 0.1}
-                                        mt="xs"
-                                    />
-                                ))}
-                        </div>
-                    ) : (
-                        <Text mt="md" c="dimmed" align="center">No object selected</Text>
-                    )}
+                    <PropertyEditor
+                        object={selectedObject}
+                        onPropertyChange={handlePropertyChange}
+                    />
                     
                     <Group position="apart" mt="xl">
                         <Button variant="default" onClick={onBack}>Back</Button>
@@ -227,21 +206,6 @@ export default function Step3Visualize({ appState, setAppState, onNext, onBack, 
                     </Group>
                 </Paper>
             </Grid.Col>
-            
-            {finalConfig && (
-                <Grid.Col span={12}>
-                    <Paper shadow="md" p="xl" withBorder>
-                        <Title order={4}>Generated Simulation Config</Title>
-                        <Text size="sm" c="dimmed" mb="md">This JSON is sent to the backend for the final simulation.</Text>
-                        <ScrollArea style={{ height: 300 }}>
-                            <Code block>{JSON.stringify(finalConfig, null, 2)}</Code>
-                        </ScrollArea>
-                         <Center mt="xl">
-                            <Button onClick={resetApp} variant="light">Start Over</Button>
-                        </Center>
-                    </Paper>
-                </Grid.Col>
-            )}
         </Grid>
     );
 }

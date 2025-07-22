@@ -1,0 +1,6 @@
+The user has uploaded the following files.
+{% for filename, contents in files.items() -%}
+{{ filename }}:
+{{ contents }}
+
+{%- endfor %}

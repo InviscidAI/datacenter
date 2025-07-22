@@ -1,27 +1,29 @@
 // App.jsx
 
-// MODIFIED: Added useEffect
 import { useState, useEffect } from 'react';
-import { Stepper, Container, Title, Text, Center } from '@mantine/core';
+import { Stepper, Container, Title, Text, Center, Tabs } from '@mantine/core';
 import Step1Upload from './components/Step1Upload';
 import Step2Classify from './components/Step2Classify';
 import Step3Visualize from './components/Step3Visualize';
 import Step4Results from './components/Step4Results';
+import StepOptimization from './components/StepOptimization';
 
-// Constants for default object properties
-const PIXELS_TO_METERS = 0.05; // Example conversion factor
+const PIXELS_TO_METERS = 0.05;
 const CATEGORIES = {
     "Data Rack": {
         color: "green",
-        default_properties: { height: 2.2, heat_load_btu: 5000 }
+        default_properties: { height: 2.2, power_watts: 5000, flow_rate: 0.5, inlet_face: "y_min", outlet_face: "y_max" }
     },
     "CRAC": {
         color: "blue",
-        default_properties: { height: 1.8, supply_temp_c: 12.0, cooling_capacity_btu: 20000, power_consumption_kw: 10.0  }
+        default_properties: { height: 1.8, supply_temp_K: 285.15, flow_rate: 1.5, return_face: "z_max" }
+    },
+    "Perforated Tile": {
+        color: "purple",
+        default_properties: { height: 0.01 }
     }
 };
 
-// ADDED: Bounding box helper function
 function getBoundingBox(points) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     if (!points || points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
@@ -35,37 +37,27 @@ function getBoundingBox(points) {
 }
 
 export default function App() {
+    const [activeTab, setActiveTab] = useState('setup');
     const [activeStep, setActiveStep] = useState(0);
     const [appState, setAppState] = useState({
         image: { file: null, b64: null, url: null },
-        unclassifiedContours: [], // {id, points}
-        objects: [], // {id, category, contour, properties}
-        // MODIFIED: Added contour field to room
+        unclassifiedContours: [],
+        objects: [],
         room: { width: 30, length: 30, height: 4, contour: null },
         runId: null,
+        whatIfRunId: null
     });
 
-    // ADDED: useEffect to automatically calculate room dimensions
     useEffect(() => {
         if (appState.room.contour) {
             const bbox = getBoundingBox(appState.room.contour.points);
             const roomWidth = parseFloat((bbox.width * PIXELS_TO_METERS).toFixed(2));
             const roomLength = parseFloat((bbox.height * PIXELS_TO_METERS).toFixed(2));
-            
-            // Avoid infinite loops by checking if values actually changed
             if (appState.room.width !== roomWidth || appState.room.length !== roomLength) {
-                 setAppState(prev => ({
-                    ...prev,
-                    room: {
-                        ...prev.room,
-                        width: roomWidth,
-                        length: roomLength,
-                    }
-                }));
+                 setAppState(prev => ({ ...prev, room: { ...prev.room, width: roomWidth, length: roomLength }}));
             }
         }
     }, [appState.room.contour]);
-
 
     const handleNextStep = () => setActiveStep((current) => (current < 3 ? current + 1 : current));
     const handlePrevStep = () => setActiveStep((current) => (current > 0 ? current - 1 : current));
@@ -76,42 +68,68 @@ export default function App() {
                 image: { file: null, b64: null, url: null },
                 unclassifiedContours: [],
                 objects: [],
-                // MODIFIED: Reset the room contour
                 room: { width: 30, length: 30, height: 4, contour: null },
-                runId: null, // Also reset the runId
+                runId: null, whatIfRunId: null,
             });
         }
         setActiveStep(step);
     };
 
+    // --- FIX: This function is now more robust. It handles objects from Step 3 (with contours)
+    // and objects from the What-If editor (which may only have pos/dims).
+    const generateSimulationConfig = (objects, room) => {
+        const roomBbox = room.contour ? getBoundingBox(room.contour.points) : { x: 0, y: 0 };
+        
+        const getSimObjects = (category, type) => {
+            return objects
+                .filter(o => o.category === category)
+                .map(o => {
+                    const simObject = { name: `${type}_${o.id.split('_')[1]}`, ...o.properties };
+                    
+                    // If the object comes from the what-if scene, it might already have pos/dims
+                    if (o.pos && o.dims) {
+                        simObject.pos = o.pos;
+                        simObject.dims = o.dims;
+                    } else { // Otherwise, calculate from contour
+                        const bbox = getBoundingBox(o.contour.points);
+                        simObject.pos = [(bbox.x - roomBbox.x) * PIXELS_TO_METERS, (bbox.y - roomBbox.y) * PIXELS_TO_METERS, 0];
+                        simObject.dims = [bbox.width * PIXELS_TO_METERS, bbox.height * PIXELS_TO_METERS, o.properties.height];
+                    }
+                    return simObject;
+                });
+        };
+
+        return {
+            room: { dims: [room.width, room.length, room.height] },
+            racks: getSimObjects("Data Rack", "rack"),
+            cracs: getSimObjects("CRAC", "crac"),
+            tiles: getSimObjects("Perforated Tile", "tile"),
+            physics: {
+                crac_supply_temp_K: objects.find(o => o.category === "CRAC")?.properties.supply_temp_K || 285.15,
+            },
+        };
+    };
+
     return (
         <Container size="xl" my="xl">
-            <Center>
-                <Title order={1}>CFD Floor Plan Automation</Title>
-            </Center>
-            <Center>
-                <Text c="dimmed" mb="xl">From image to simulation-ready 3D model.</Text>
-            </Center>
-
-            <Stepper active={activeStep} onStepClick={setActiveStep} breakpoint="sm" allowNextStepsSelect={false}>
-                <Stepper.Step label="Upload" description="Provide floor plan">
-                    <Step1Upload setAppState={setAppState} onNext={handleNextStep} />
-                </Stepper.Step>
-                <Stepper.Step label="Classify" description="Identify objects">
-                    <Step2Classify appState={appState} setAppState={setAppState} onNext={handleNextStep} onBack={handlePrevStep} categories={CATEGORIES} />
-                </Stepper.Step>
-                <Stepper.Step label="Visualize & Edit" description="Create 3D model">
-                   <Step3Visualize appState={appState} setAppState={setAppState} onNext={handleNextStep} onBack={handlePrevStep} categories={CATEGORIES} pxToMeters={PIXELS_TO_METERS} resetApp={() => resetToStep(0)} />
-                </Stepper.Step>
-                <Stepper.Step label="Results" description="View simulation">
-                    <Step4Results appState={appState} setAppState={setAppState} onReset={() => resetToStep(0)} />
-                </Stepper.Step>
-                <Stepper.Completed>
-                    <Center>
-                        <Text>Simulation request sent! Check backend console.</Text>
-                    </Center>
-                </Stepper.Completed>
-            </Stepper>
+            <Center><Title order={1}>CFD Floor Plan Automation</Title></Center>
+            <Center><Text c="dimmed" mb="xl">From image to simulation-ready 3D model and beyond.</Text></Center>
+            <Tabs value={activeTab} onChange={setActiveTab}>
+                <Tabs.List grow>
+                    <Tabs.Tab value="setup">Design & Simulate</Tabs.Tab>
+                    <Tabs.Tab value="optimize" disabled={!appState.runId}>Optimize</Tabs.Tab>
+                    <Tabs.Tab value="results" disabled={!appState.runId}>Results & What-If</Tabs.Tab>
+                </Tabs.List>
+                <Tabs.Panel value="setup" pt="xl">
+                    <Stepper active={activeStep} onStepClick={setActiveStep} breakpoint="sm" allowNextStepsSelect={false}>
+                        <Stepper.Step label="Upload" description="Provide floor plan"><Step1Upload setAppState={setAppState} onNext={handleNextStep} /></Stepper.Step>
+                        <Stepper.Step label="Classify" description="Identify objects"><Step2Classify appState={appState} setAppState={setAppState} onNext={handleNextStep} onBack={handlePrevStep} categories={CATEGORIES} /></Stepper.Step>
+                        <Stepper.Step label="Visualize & Edit" description="Create 3D model"><Step3Visualize appState={appState} setAppState={setAppState} onNext={() => { handleNextStep(); setActiveTab('results'); }} onBack={handlePrevStep} categories={CATEGORIES} pxToMeters={PIXELS_TO_METERS} generateConfig={generateSimulationConfig} /></Stepper.Step>
+                    </Stepper>
+                </Tabs.Panel>
+                <Tabs.Panel value="optimize" pt="xl"><StepOptimization appState={appState} generateConfig={generateSimulationConfig} /></Tabs.Panel>
+                <Tabs.Panel value="results" pt="xl"><Step4Results appState={appState} setAppState={setAppState} onReset={() => { resetToStep(0); setActiveTab('setup'); }} generateConfig={generateSimulationConfig} categories={CATEGORIES} pxToMeters={PIXELS_TO_METERS} /></Tabs.Panel>
+            </Tabs>
         </Container>
     );
 }

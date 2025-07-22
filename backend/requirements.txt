@@ -9,5 +9,9 @@ transformers
 scikit-learn
 numpy-stl
 pyvista
-"trimesh[easy]"
+trimesh
 gunicorn
+foamlib
+openai
+llama-index-core
+jinja2
