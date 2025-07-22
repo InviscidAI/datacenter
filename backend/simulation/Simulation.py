@@ -30,7 +30,7 @@ class Results:
                 raise Exception("Failed to read internalMesh from OpenFOAM results.")
             min_temp, max_temp = mesh_data.get_data_range('T')
 
-            original_slice = mesh_data.slice('z', origin=(0, 0, 1))
+            original_slice = mesh_data.slice('z', origin=(0, 0, 2.5))
             original_slice = original_slice.compute_normals(consistent_normals=True)
             original_slice = original_slice.flip_faces()
 
@@ -82,11 +82,11 @@ class Results:
             )
 
             # slic = resampled_data.slice('z', origin=(cx,cy,cz))
-            # print(len(slic.points[::10]))
+            # #print(len(slic.points[::10]))
             # streamlines = mesh_data.streamlines_from_source(
             #     slic.points[::10]
             # )
-            # plotter_vol.add_mesh(
+            # plotter_vel.add_mesh(
             #     streamlines.tube(radius=0.01), scalars='U'
             # )
 

@@ -59,7 +59,7 @@ export default function Step1Upload({ setAppState, onNext }) {
                 </Button>
                 {file && <Text size="sm" c="dimmed"><IconFile size={14} /> {file.name}</Text>}
                 {error && <Text color="red" size="sm" mt="sm">{error}</Text>}
-                <Button onClick={handleUpload} disabled={!file || loading} mt="xl" size="md">
+                <Button onClick={handleUpload} disabled={!file || loading} mt="xl" mb="md">
                     {loading ? <Loader size="sm" color="white" /> : "Process Image & Continue"}
                 </Button>
             </Center>

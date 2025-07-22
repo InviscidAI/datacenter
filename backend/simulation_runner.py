@@ -53,7 +53,8 @@ def transform_config(config: dict) -> list[dict]:
             'z_min': pos[2], 'z_max': pos[2] + dims[2],
             'flow_rate': crac.get('flow_rate', 1.0), # Use value from UI or default
             'set_temp': crac.get('supply_temp_K', 293.15),
-            'inlet': crac.get('return_face', 'z_max'), # Air return
+            'inlet': crac.get('inlet_face', 'z_max'), # Air return
+            'outlet': crac.get('outlet_face', 'y_min'), # Air return
         })
         
     # --- NEW: 5. Perforated Tile Definitions ---

@@ -27,14 +27,11 @@ export function ThreeDScene({ objects, room, categories, pxToMeters, onObjectCli
     }, [roomContour]);
 
     const objectMeshes = useMemo(() => objects.map(obj => {
-        // --- FIX: Declare variables that will be conditionally assigned ---
         let width, depth, x, z;
-        const height = obj.properties?.height || 2.0; // Use optional chaining for safety
+        const height = obj.properties?.height || 2.0;
         const uniqueKey = obj.id || obj.name;
 
-        // --- FIX: Conditionally determine position and dimensions based on object shape ---
         if (obj.contour && obj.contour.points) {
-            // Case 1: Object is from initial classification (has a contour)
             const bbox = getBoundingBox(obj.contour.points);
             width = bbox.width * pxToMeters;
             depth = bbox.height * pxToMeters;
@@ -46,23 +43,22 @@ export function ThreeDScene({ objects, room, categories, pxToMeters, onObjectCli
             const relativeY_px = objCenterY_px - roomOriginPx.y;
 
             x = relativeX_px * pxToMeters - roomCenterMeters.x;
-            z = -((relativeY_px * pxToMeters) - roomCenterMeters.y); // Y in 2D is Z in 3D, and inverted
+            // --- FIX: Flipped Z-axis calculation to match floorplan orientation.
+            // The top of the 2D image (smaller Y) should be further away (negative Z).
+            z = (relativeY_px * pxToMeters) - roomCenterMeters.y;
         } 
         else if (obj.pos && obj.dims) {
-            // Case 2: Object is from a simulation config (what-if scenario)
             width = obj.dims[0];
             depth = obj.dims[1];
             
-            // Position is already in meters relative to room corner (0,0).
-            // We just need to adjust it to be relative to the room center for the 3D scene.
             const centerX = obj.pos[0] + width / 2;
-            const centerZ = obj.pos[1] + depth / 2; // In 2D config, Y is depth (our Z)
+            const centerZ = obj.pos[1] + depth / 2;
 
             x = centerX - roomCenterMeters.x;
-            z = -(centerZ - roomCenterMeters.y); 
+            // --- FIX: Flipped Z-axis calculation for consistency.
+            z = centerZ - roomCenterMeters.y; 
         } 
         else {
-            // If we can't determine the object's geometry, don't render it.
             console.error("Cannot render object, it is missing 'contour' or 'pos/dims':", obj);
             return null;
         }
@@ -76,7 +72,7 @@ export function ThreeDScene({ objects, room, categories, pxToMeters, onObjectCli
                         opacity={0.8}
                     />
                 </Box>
-                <DreiText position={[0, height / 2 + 0.3, 0]} color="white" fontSize={0.2} anchorX="center" anchorY="middle">
+                <DreiText position={[0, height / 2 + 0.3, 0]} color="black" fontSize={0.2} anchorX="center" anchorY="middle">
                     {obj.category} {(uniqueKey.split('_')[1] || '').substring(0, 4)}
                 </DreiText>
             </group>
@@ -133,7 +129,6 @@ export function PropertyEditor({ object, onPropertyChange }) {
                         />
                     );
                 }
-                // Handle non-numeric, non-face properties if any
                 return <Text key={key}>{label}: {String(value)}</Text>;
             })}
         </div>

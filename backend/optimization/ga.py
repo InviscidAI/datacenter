@@ -84,7 +84,7 @@ class GAOptimizer:
             while not added:
                 parents = np.random.choice(
                     np.arange(len(self.results)),
-                    len(self.optim_dict['objects']),
+                    2,
                     replace=True,
                     p=weights
                 )

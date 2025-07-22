@@ -11,15 +11,16 @@ import StepOptimization from './components/StepOptimization';
 const PIXELS_TO_METERS = 0.05;
 const CATEGORIES = {
     "Data Rack": {
-        color: "green",
-        default_properties: { height: 2.2, power_watts: 5000, flow_rate: 0.5, inlet_face: "y_min", outlet_face: "y_max" }
+        color: "#43d270",
+        default_properties: { height: 2.2, power_watts: 1000, flow_rate: 0.05, inlet_face: "x_max", outlet_face: "x_min" }
     },
     "CRAC": {
-        color: "blue",
-        default_properties: { height: 1.8, supply_temp_K: 285.15, flow_rate: 1.5, return_face: "z_max" }
+        color: "#ab9eff",
+        // --- FIX: Added inlet/outlet face properties as requested.
+        default_properties: { height: 1.8, supply_temp_K: 294.15, flow_rate: 8, inlet_face: "z_max", outlet_face: "y_min" }
     },
     "Perforated Tile": {
-        color: "purple",
+        color: "#f96c30",
         default_properties: { height: 0.01 }
     }
 };
@@ -75,8 +76,6 @@ export default function App() {
         setActiveStep(step);
     };
 
-    // --- FIX: This function is now more robust. It handles objects from Step 3 (with contours)
-    // and objects from the What-If editor (which may only have pos/dims).
     const generateSimulationConfig = (objects, room) => {
         const roomBbox = room.contour ? getBoundingBox(room.contour.points) : { x: 0, y: 0 };
         
@@ -85,12 +84,11 @@ export default function App() {
                 .filter(o => o.category === category)
                 .map(o => {
                     const simObject = { name: `${type}_${o.id.split('_')[1]}`, ...o.properties };
-                    
-                    // If the object comes from the what-if scene, it might already have pos/dims
+
                     if (o.pos && o.dims) {
                         simObject.pos = o.pos;
                         simObject.dims = o.dims;
-                    } else { // Otherwise, calculate from contour
+                    } else { 
                         const bbox = getBoundingBox(o.contour.points);
                         simObject.pos = [(bbox.x - roomBbox.x) * PIXELS_TO_METERS, (bbox.y - roomBbox.y) * PIXELS_TO_METERS, 0];
                         simObject.dims = [bbox.width * PIXELS_TO_METERS, bbox.height * PIXELS_TO_METERS, o.properties.height];

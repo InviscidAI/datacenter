@@ -1,10 +1,12 @@
+// Step2Classify.jsx
+
 import { useState, useRef, useEffect } from 'react';
 import { Grid, Paper, Radio, Title, Button, Group, Text, Center, Loader, Box } from '@mantine/core';
-import axios from 'axios';
 import apiClient from '../api';
 
 // Helper for point-in-polygon test
 function isPointInPolygon(point, polygon) {
+    if (!polygon || polygon.length === 0) return false;
     let x = point[0], y = point[1];
     let inside = false;
     for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
@@ -16,7 +18,22 @@ function isPointInPolygon(point, polygon) {
     return inside;
 }
 
-function InteractiveCanvas({ imageSrc, unclassified, classified, onContourClick, categories, roomContour }) {
+// Helper to calculate bounding box from contour points
+function getBoundingBox(points) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    if (!points || points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+    points.forEach(([x, y]) => {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+    });
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+
+// MODIFIED: Canvas now supports hover/deselect on classified objects and displays them with bounding boxes.
+function InteractiveCanvas({ imageSrc, unclassified, classified, onContourClick, categories, roomContour, hoveredContourId, setHoveredContourId }) {
     const canvasRef = useRef(null);
 
     useEffect(() => {
@@ -30,9 +47,9 @@ function InteractiveCanvas({ imageSrc, unclassified, classified, onContourClick,
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(img, 0, 0);
 
-            // Draw unclassified contours
+            // Draw room contour
             if (roomContour) {
-                ctx.strokeStyle = 'cyan'; // A distinct color for the room
+                ctx.strokeStyle = 'cyan';
                 ctx.lineWidth = 4;
                 ctx.lineJoin = 'round';
                 ctx.beginPath();
@@ -44,71 +61,105 @@ function InteractiveCanvas({ imageSrc, unclassified, classified, onContourClick,
                 ctx.stroke();
             }
 
-            ctx.strokeStyle = 'magenta';
-            ctx.lineWidth = 2;
-            unclassified.forEach(({ points }) => {
-                ctx.beginPath();
-                ctx.moveTo(points[0][0], points[0][1]);
-                for (let i = 1; i < points.length; i++) {
-                    ctx.lineTo(points[i][0], points[i][1]);
+            // Combine all items that can be hovered
+            const allHoverableItems = [
+                ...unclassified,
+                ...classified.map(c => ({ id: c.id, points: c.contour.points }))
+            ];
+            
+            // Draw hover effect if any item is hovered
+            if (hoveredContourId) {
+                const item = allHoverableItems.find(i => i.id === hoveredContourId);
+                if (item) {
+                    ctx.beginPath();
+                    ctx.moveTo(item.points[0][0], item.points[0][1]);
+                    for (let i = 1; i < item.points.length; i++) {
+                        ctx.lineTo(item.points[i][0], item.points[i][1]);
+                    }
+                    ctx.closePath();
+                    ctx.fillStyle = 'rgba(255, 0, 255, 0.4)'; // Semi-transparent magenta
+                    ctx.fill();
                 }
-                ctx.closePath();
-                ctx.stroke();
-            });
-
-            // Draw classified objects
-            ctx.lineWidth = 3;
+            }
+            
+            // Draw classified objects using their bounding box
+            ctx.lineWidth = 2; // Thinner outlines for selected objects
             classified.forEach(obj => {
                 ctx.strokeStyle = categories[obj.category]?.color || 'gray';
-                const { points } = obj.contour;
-                ctx.beginPath();
-                ctx.moveTo(points[0][0], points[0][1]);
-                for (let i = 1; i < points.length; i++) {
-                    ctx.lineTo(points[i][0], points[i][1]);
-                }
-                ctx.closePath();
-                ctx.stroke();
+                const bbox = getBoundingBox(obj.contour.points);
+                ctx.strokeRect(bbox.x, bbox.y, bbox.width, bbox.height);
             });
         };
-    }, [imageSrc, unclassified, classified, categories, roomContour]);
+    }, [imageSrc, unclassified, classified, categories, roomContour, hoveredContourId]);
 
-    const handleClick = (event) => {
+    const getMousePos = (event) => {
         const canvas = canvasRef.current;
         const rect = canvas.getBoundingClientRect();
         const scaleX = canvas.width / rect.width;
         const scaleY = canvas.height / rect.height;
         const x = (event.clientX - rect.left) * scaleX;
         const y = (event.clientY - rect.top) * scaleY;
+        return { x, y };
+    }
 
-        // Find which unclassified contour was clicked
-        const clickedContour = unclassified.find(c => isPointInPolygon([x, y], c.points));
-        if (clickedContour) {
-            onContourClick(clickedContour.id);
+    const handleMouseMove = (event) => {
+        const { x, y } = getMousePos(event);
+        // Check both unclassified and classified items for hover
+        const allItems = [
+            ...unclassified, 
+            ...classified.map(c => ({ id: c.id, points: c.contour.points }))
+        ];
+        const hovered = allItems.find(c => isPointInPolygon([x, y], c.points));
+        setHoveredContourId(hovered ? hovered.id : null);
+    };
+    
+    const handleMouseLeave = () => {
+        setHoveredContourId(null);
+    }
+
+    const handleClick = (event) => {
+        if (hoveredContourId) {
+            onContourClick(hoveredContourId);
         }
     };
 
-    return <canvas ref={canvasRef} onClick={handleClick} style={{ maxWidth: '100%', cursor: 'pointer' }} />;
+    return <canvas ref={canvasRef} onClick={handleClick} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave} style={{ maxWidth: '100%', cursor: 'pointer' }} />;
 }
 
 
 export default function Step2Classify({ appState, setAppState, onNext, onBack, categories }) {
     const [activeCategory, setActiveCategory] = useState(Object.keys(categories)[0]);
     const [loading, setLoading] = useState(false);
+    const [hoveredContourId, setHoveredContourId] = useState(null); // State for hover highlight
 
     const handleContourClick = (contourId) => {
-        const contourToClassify = appState.unclassifiedContours.find(c => c.id === contourId);
-        if (!contourToClassify) return;
+        // Check if the clicked item is already classified
+        const classifiedIndex = appState.objects.findIndex(o => o.id === contourId);
 
-        setAppState(prev => ({
-            ...prev,
-            unclassifiedContours: prev.unclassifiedContours.filter(c => c.id !== contourId),
-            objects: [...prev.objects, {
-                id: contourId,
-                category: activeCategory,
-                contour: contourToClassify,
-                properties: { ...categories[activeCategory].default_properties }
-            }],
-        }));
+        if (classifiedIndex > -1) {
+            // It's a classified object -> Deselect it (move back to unclassified)
+            const [objectToDeselect] = appState.objects.splice(classifiedIndex, 1);
+            setAppState(prev => ({
+                ...prev,
+                objects: [...prev.objects], // The object is already removed via splice
+                unclassifiedContours: [...prev.unclassifiedContours, objectToDeselect.contour],
+            }));
+        } else {
+            // It's an unclassified contour -> Classify it
+            const contourToClassify = appState.unclassifiedContours.find(c => c.id === contourId);
+            if (!contourToClassify) return;
+
+            setAppState(prev => ({
+                ...prev,
+                unclassifiedContours: prev.unclassifiedContours.filter(c => c.id !== contourId),
+                objects: [...prev.objects, {
+                    id: contourId,
+                    category: activeCategory,
+                    contour: contourToClassify,
+                    properties: { ...categories[activeCategory].default_properties }
+                }],
+            }));
+        }
     };
     
     const handleAutofill = async () => {
@@ -170,6 +221,8 @@ export default function Step2Classify({ appState, setAppState, onNext, onBack, c
                             onContourClick={handleContourClick}
                             categories={categories}
                             roomContour={appState.room.contour}
+                            hoveredContourId={hoveredContourId}
+                            setHoveredContourId={setHoveredContourId}
                         />
                    )}
                 </Paper>
@@ -177,7 +230,7 @@ export default function Step2Classify({ appState, setAppState, onNext, onBack, c
             <Grid.Col span={{ base: 12, md: 4 }}>
                 <Paper shadow="md" p="xl" withBorder>
                     <Title order={4}>Classification</Title>
-                    <Text size="sm" c="dimmed" mb="md">Select a category, then click on an unclassified object (magenta) in the image.</Text>
+                    <Text size="sm" c="dimmed" mb="md">Select a category, then click on an object to classify it. Click a classified object to deselect it.</Text>
                     <Radio.Group value={activeCategory} onChange={setActiveCategory} name="categorySelector" label="Select category to assign">
                         <Group mt="xs">
                             {Object.keys(categories).map(cat => <Radio key={cat} value={cat} label={cat} />)}

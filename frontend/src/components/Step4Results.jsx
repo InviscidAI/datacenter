@@ -10,33 +10,47 @@ import { v4 as uuidv4 } from 'uuid';
 import { ThreeDScene, PropertyEditor } from './Step3Visualize';
 
 function useSimulationStatus(runId) {
-    const [status, setStatus] = useState(null);
+    const [status, setStatus] = useState(runId ? 'running' : null);
     useEffect(() => {
-        if (runId) { setStatus('running'); } else { setStatus(null); return; }
+        if (!runId) {
+            setStatus(null);
+            return;
+        }
+        setStatus('running');
         const interval = setInterval(async () => {
             try {
                 const response = await apiClient.get(`/simulation-status/${runId}`);
-                if (response.data.status !== 'running' && response.data.status !== 'running_optimization') {
-                    setStatus(response.data.status);
+                const currentStatus = response.data.status;
+                if (currentStatus !== 'running' && currentStatus !== 'running_optimization') {
+                    setStatus(currentStatus);
                     clearInterval(interval);
+                } else if (status !== currentStatus) {
+                    setStatus(currentStatus);
                 }
-            } catch { setStatus('failed'); clearInterval(interval); }
+            } catch { 
+                setStatus('failed'); 
+                clearInterval(interval); 
+            }
         }, 3000);
         return () => clearInterval(interval);
     }, [runId]);
     return status;
 }
 
-function ModelViewer({ url }) {
+// --- FIX: ModelViewer now correctly orients the model to match the setup view.
+function ModelViewer({ url, room }) {
     const { scene } = useGLTF(url);
-    return <primitive key={url} object={scene} scale={1} />;
+    // This flips the model on its depth axis (Z) and centers it correctly.
+    const position = room ? [-room.width / 2, 0, room.length / 2] : [0, 0, 0];
+    const scale = [1, 1, -1];
+    return <primitive key={url} object={scene} scale={scale} position={position} />;
 }
+
 
 function CanvasLoader() {
   return (<Html center><div style={{ color: 'white' }}>Loading 3D Model...</div></Html>);
 }
 
-// FIX: Chatbot now takes the current config and an update handler
 function Chatbot({ currentConfig, onChatbotUpdate }) {
     const [sessionId] = useState(() => `session_${uuidv4()}`);
     const [message, setMessage] = useState('');
@@ -51,7 +65,6 @@ function Chatbot({ currentConfig, onChatbotUpdate }) {
         setLoading(true);
 
         try {
-            // Pass the current state of the what-if config to the chatbot backend
             const response = await apiClient.post('/chat/send', { 
                 session_id: sessionId, 
                 message, 
@@ -59,10 +72,27 @@ function Chatbot({ currentConfig, onChatbotUpdate }) {
             });
             
             const reply = response.data.reply;
-            setHistory(prev => [...prev, { role: 'assistant', content: JSON.stringify(reply, null, 2) }]);
-            
-            // Pass the raw reply up to the parent to handle the state update
-            if (reply.action) {
+            let assistantMessage;
+
+            // Check the type of reply to display it nicely in the chat window.
+            // A real LLM might sometimes return a raw string, while our mock returns an object.
+            if (typeof reply === 'object' && reply !== null && reply.speak) {
+                // If the reply is an object with a 'speak' key, use that for the chat.
+                assistantMessage = reply.speak;
+            } else if (typeof reply === 'object' && reply !== null) {
+                // If it's another object, stringify it for debugging.
+                assistantMessage = JSON.stringify(reply, null, 2);
+            } else {
+                // Otherwise, it's likely a raw string.
+                assistantMessage = reply;
+            }
+
+            // Update the chat history with the user-friendly message.
+            setHistory(prev => [...prev, { role: 'assistant', content: assistantMessage }]);
+
+            // The automation logic remains the same but is now safer.
+            // It only triggers if the reply is an object with an 'action' property.
+            if (typeof reply === 'object' && reply !== null && reply.action) {
                 onChatbotUpdate(reply);
             }
         } catch (err) {
@@ -84,7 +114,6 @@ function Chatbot({ currentConfig, onChatbotUpdate }) {
     );
 }
 
-
 export default function Step4Results({ appState, setAppState, onReset, generateConfig, categories, pxToMeters }) {
     const { runId, whatIfRunId, objects: originalObjects, room, room: { contour: roomContour } } = appState;
     const originalStatus = useSimulationStatus(runId);
@@ -96,7 +125,7 @@ export default function Step4Results({ appState, setAppState, onReset, generateC
 
     useEffect(() => {
         if (originalObjects) {
-            setWhatIfObjects(JSON.parse(JSON.stringify(originalObjects))); // Deep copy
+            setWhatIfObjects(JSON.parse(JSON.stringify(originalObjects)));
         }
     }, [originalObjects]);
 
@@ -117,14 +146,13 @@ export default function Step4Results({ appState, setAppState, onReset, generateC
         );
     };
 
-    // FIX: A new handler to process updates coming from the chatbot
     const handleChatbotUpdate = (reply) => {
         setWhatIfObjects(prevObjects => {
             const getSimType = (category) => {
                 if (category === 'Data Rack') return 'rack';
                 if (category === 'CRAC') return 'crac';
                 if (category === 'Perforated Tile') return 'tile';
-                return 'obj'; // Fallback
+                return 'obj';
             };
 
             if (reply.action === 'delete') {
@@ -132,7 +160,6 @@ export default function Step4Results({ appState, setAppState, onReset, generateC
                     const simType = getSimType(obj.category);
                     const numId = obj.id.split('_')[1];
                     const objSimName = `${simType}_${numId}`;
-                    // The comparison is now correct
                     return objSimName !== reply.target_name;
                 });
             }
@@ -143,7 +170,6 @@ export default function Step4Results({ appState, setAppState, onReset, generateC
                     const numId = obj.id.split('_')[1];
                     const objSimName = `${simType}_${numId}`;
 
-                    // The comparison is now correct
                     if (objSimName === reply.target_name || reply.target_name === 'all') {
                         const newProperties = { ...obj.properties, ...reply.parameters };
                         return { ...obj, properties: newProperties };
@@ -166,12 +192,11 @@ export default function Step4Results({ appState, setAppState, onReset, generateC
         }
     };
 
-    // FIX: Dedicated rendering logic for the Original Result panel
     let originalResultContent;
-    if (originalStatus === 'running') {
+    if (originalStatus === 'running' || originalStatus === 'running_optimization') {
         originalResultContent = <Center style={{height: '100%'}}><Loader /></Center>;
     } else if (originalStatus === 'completed' && modelUrl) {
-        originalResultContent = (<Canvas key={modelUrl}><Suspense fallback={<CanvasLoader />}><ModelViewer url={modelUrl} /><Environment preset="city" /><OrbitControls /></Suspense></Canvas>);
+        originalResultContent = (<Canvas key={modelUrl}><Suspense fallback={<CanvasLoader />}><ModelViewer url={modelUrl} room={room} /><Environment preset="city" /><OrbitControls /></Suspense></Canvas>);
     } else if (originalStatus === 'failed') {
         originalResultContent = <Alert color="red" title="Initial Simulation Failed" />;
     } else {
@@ -179,10 +204,10 @@ export default function Step4Results({ appState, setAppState, onReset, generateC
     }
 
     let whatIfResultContent;
-    if (whatIfStatus === 'running') {
+    if (whatIfStatus === 'running' || whatIfStatus === 'running_optimization') {
         whatIfResultContent = <Center style={{height: '100%'}}><Loader/></Center>;
     } else if (whatIfStatus === 'completed' && whatIfModelUrl) {
-        whatIfResultContent = (<Canvas key={whatIfModelUrl}><Suspense fallback={<CanvasLoader />}><ModelViewer url={whatIfModelUrl} /><Environment preset="city" /><OrbitControls /></Suspense></Canvas>);
+        whatIfResultContent = (<Canvas key={whatIfModelUrl}><Suspense fallback={<CanvasLoader />}><ModelViewer url={whatIfModelUrl} room={room} /><Environment preset="city" /><OrbitControls /></Suspense></Canvas>);
     } else if (whatIfStatus === 'failed') {
         whatIfResultContent = <Alert color="red" title="What-If Simulation Failed" />;
     } else {

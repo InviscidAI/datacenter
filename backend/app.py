@@ -57,8 +57,15 @@ def find_room_and_objects_from_image_bytes(image_bytes):
     h, w, _ = img.shape
     total_area = h * w
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 225, 255, cv2.THRESH_BINARY_INV)
-    all_contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    blurred_gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    edges = cv2.Canny(gray, 50, 110)
+    close_kernel = np.ones((2, 2), np.uint8)
+    closed_mask = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, close_kernel)
+    all_contours, _ = cv2.findContours(closed_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    #_, thresh = cv2.threshold(gray, 225, 255, cv2.THRESH_BINARY_INV)
+    #all_contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
     # Find room contour (largest contour, but not the whole image)
     room_contour_raw = max((cnt for cnt in all_contours), key=cv2.contourArea, default=None)
@@ -283,7 +290,7 @@ def chat_endpoint():
         return jsonify({"reply": parsed_response, "session_id": session_id})
     except json.JSONDecodeError:
         # This case is more for the real LLM which might not return perfect JSON
-        return jsonify({"reply": {"raw_text": response_content}, "session_id": session_id})
+        return jsonify({"reply": response_content, "session_id": session_id})
 
 @app.route('/api/simulation-status/<run_id>', methods=['GET'])
 def simulation_status_endpoint(run_id):
