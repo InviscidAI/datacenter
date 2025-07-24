@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react';
 import { Grid, Paper, Title, Button, Group, Text, NumberInput, Select, SimpleGrid } from '@mantine/core';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Box, Text as DreiText } from '@react-three/drei';
-import apiClient from '../api';
+import { simClient } from '../api';
 
 // Helper to calculate bounding box from contour points
 function getBoundingBox(points) {
@@ -153,7 +153,7 @@ export default function Step3Visualize({ appState, setAppState, onNext, onBack, 
         const config = generateConfig(appState.objects, appState.room);
         
         try {
-            const response = await apiClient.post('/run-simulation', config);
+            const response = await simClient.post('/run-simulation', config);
             const { run_id } = response.data;
 
             setAppState(prev => ({ ...prev, runId: run_id }));

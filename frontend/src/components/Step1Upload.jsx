@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { Group, Button, Text, Paper, Center, Loader } from '@mantine/core';
 import { IconUpload, IconFile } from '@tabler/icons-react';
-import axios from 'axios';
-import apiClient from '../api';
+import { aiClient } from '../api';
 
 export default function Step1Upload({ setAppState, onNext }) {
     const [file, setFile] = useState(null);
@@ -29,7 +28,7 @@ export default function Step1Upload({ setAppState, onNext }) {
         formData.append('file', file);
 
         try {
-            const response = await apiClient.post('/process-image', formData, {
+            const response = await aiClient.post('/process-image', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
             });
             const { image_b64, contours, room_contour } = response.data;
@@ -43,7 +42,7 @@ export default function Step1Upload({ setAppState, onNext }) {
             }));
             onNext();
         } catch (err) {
-            setError('Failed to process image. Please check the backend.');
+            setError('Failed to process image. Please try again later.');
             console.error(err);
         } finally {
             setLoading(false);

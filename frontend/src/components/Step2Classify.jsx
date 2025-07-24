@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Grid, Paper, Radio, Title, Button, Group, Text, Center, Loader, Box } from '@mantine/core';
-import apiClient from '../api';
+import { aiClient } from '../api';
 
 // Helper for point-in-polygon test
 function isPointInPolygon(point, polygon) {
@@ -117,7 +117,7 @@ function InteractiveCanvas({ imageSrc, unclassified, classified, onContourClick,
         setHoveredContourId(null);
     }
 
-    const handleClick = (event) => {
+    const handleClick = () => {
         if (hoveredContourId) {
             onContourClick(hoveredContourId);
         }
@@ -170,7 +170,7 @@ export default function Step2Classify({ appState, setAppState, onNext, onBack, c
         }));
 
         try {
-            const response = await apiClient.post('/autofill', {
+            const response = await aiClient.post('/autofill', {
                 image_b64: appState.image.b64,
                 example_objects,
                 unclassified_contours: appState.unclassifiedContours

@@ -5,7 +5,7 @@ import { Paper, Title, Button, Text, Center, Loader, SegmentedControl, Alert, Gr
 import { IconAlertCircle, IconPlayerPlay, IconSend } from '@tabler/icons-react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Environment, Html } from '@react-three/drei';
-import apiClient from '../api';
+import { simClient, aiClient } from '../api';
 import { v4 as uuidv4 } from 'uuid';
 import { ThreeDScene, PropertyEditor } from './Step3Visualize';
 
@@ -19,7 +19,7 @@ function useSimulationStatus(runId) {
         setStatus('running');
         const interval = setInterval(async () => {
             try {
-                const response = await apiClient.get(`/simulation-status/${runId}`);
+                const response = await simClient.get(`/simulation-status/${runId}`);
                 const currentStatus = response.data.status;
                 if (currentStatus !== 'running' && currentStatus !== 'running_optimization') {
                     setStatus(currentStatus);
@@ -65,10 +65,10 @@ function Chatbot({ currentConfig, onChatbotUpdate }) {
         setLoading(true);
 
         try {
-            const response = await apiClient.post('/chat/send', { 
-                session_id: sessionId, 
-                message, 
-                config: currentConfig 
+            const response = await aiClient.post('/chat/send', {
+                session_id: sessionId,
+                message,
+                config: currentConfig
             });
             
             const reply = response.data.reply;
@@ -96,6 +96,7 @@ function Chatbot({ currentConfig, onChatbotUpdate }) {
                 onChatbotUpdate(reply);
             }
         } catch (err) {
+    console.error(err);
             setHistory(prev => [...prev, { role: 'assistant', content: 'Error processing request.' }]);
         } finally {
             setLoading(false);
@@ -129,8 +130,8 @@ export default function Step4Results({ appState, setAppState, onReset, generateC
         }
     }, [originalObjects]);
 
-    const modelUrl = (originalStatus === 'completed' && runId) ? `${apiClient.defaults.baseURL}/get-result/${runId}/${view}.gltf` : null;
-    const whatIfModelUrl = (whatIfStatus === 'completed' && whatIfRunId) ? `${apiClient.defaults.baseURL}/get-result/${whatIfRunId}/${view}.gltf` : null;
+    const modelUrl = (originalStatus === 'completed' && runId) ? `${simClient.defaults.baseURL}/get-result/${runId}/${view}.gltf` : null;
+    const whatIfModelUrl = (whatIfStatus === 'completed' && whatIfRunId) ? `${simClient.defaults.baseURL}/get-result/${whatIfRunId}/${view}.gltf` : null;
 
     const selectedWhatIfObject = useMemo(() => {
         return whatIfObjects?.find(o => o.id === selectedWhatIfObjectId);
@@ -185,7 +186,7 @@ export default function Step4Results({ appState, setAppState, onReset, generateC
         if (!whatIfObjects) return;
         try {
             const configToRun = generateConfig(whatIfObjects, room);
-            const response = await apiClient.post('/run-simulation', configToRun);
+            const response = await simClient.post('/run-simulation', configToRun);
             setAppState(prev => ({ ...prev, whatIfRunId: response.data.run_id }));
         } catch (error) {
             console.error("Failed to run what-if simulation:", error);

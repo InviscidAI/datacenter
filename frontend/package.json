@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:deploy": "npm run build && mkdir -p ../backend/dist && rm -rf ../backend/dist/* && cp -r dist/* ../backend/dist",
     "lint": "eslint .",
     "preview": "vite preview"
   },
