@@ -5,7 +5,7 @@ import { Paper, Title, Button, Text, Center, Loader, Alert, Grid, NumberInput, G
 import { IconPlayerPlay, IconRefresh } from '@tabler/icons-react';
 import { Canvas } from '@react-three/fiber';
 import { useGLTF, Environment, OrbitControls, Html } from '@react-three/drei';
-import apiClient from '../api';
+import { simClient } from '../api';
 
 function getBoundingBox(points) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -31,7 +31,7 @@ function useSimulationStatus(runId) {
         setStatus('running');
         const interval = setInterval(async () => {
             try {
-                const response = await apiClient.get(`/simulation-status/${runId}`);
+                const response = await simClient.get(`/simulation-status/${runId}`);
                 const currentStatus = response.data.status;
                 setStatus(currentStatus); // Update status directly
                 if (currentStatus !== 'running' && currentStatus !== 'running_optimization') {
@@ -65,7 +65,7 @@ function OptimizationResultDisplay({ runId, type }) {
 
     useEffect(() => {
         if (runId) {
-            apiClient.get(`/get-result/${runId}/optimization_result.json`)
+            simClient.get(`/get-result/${runId}/optimization_result.json`)
                 .then(response => setResultData(response.data))
                 .catch(() => setError('Could not load optimization results file.'));
         }
@@ -150,8 +150,8 @@ export default function StepOptimization({ appState, generateConfig: initialGene
         return config;
     };
 
-    const originalModelUrl = (initialSimStatus === 'completed' && appState.runId) ? `${apiClient.defaults.baseURL}/get-result/${appState.runId}/${view}.gltf` : null;
-    const optimizedModelUrl = (optimStatus === 'completed' && optimRunId) ? `${apiClient.defaults.baseURL}/get-result/${optimRunId}/${view}.gltf` : null;
+    const originalModelUrl = (initialSimStatus === 'completed' && appState.runId) ? `${simClient.defaults.baseURL}/get-result/${appState.runId}/${view}.gltf` : null;
+    const optimizedModelUrl = (optimStatus === 'completed' && optimRunId) ? `${simClient.defaults.baseURL}/get-result/${optimRunId}/${view}.gltf` : null;
 
     const handleRun = async (type) => {
         setError('');
@@ -180,7 +180,7 @@ export default function StepOptimization({ appState, generateConfig: initialGene
         }
 
         try {
-            const response = await apiClient.post(endpoint, config);
+            const response = await simClient.post(endpoint, config);
             setOptimRunId(response.data.run_id);
         } catch (err) {
             const errorMessage = err.response?.data?.error || err.message;
