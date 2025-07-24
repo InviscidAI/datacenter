@@ -81,7 +81,7 @@ def find_room_and_objects_from_image_bytes(image_bytes):
         }
 
     # Filter object contours
-    min_area, max_area = 50, 50000
+    min_area, max_area = total_area/4000, total_area/4
     object_contours = []
     for cnt in all_contours:
         is_object_size = min_area < cv2.contourArea(cnt) < max_area
@@ -190,7 +190,7 @@ def autofill_endpoint():
                 max_sim, best_cat = sim, cat
         
         # Using a fixed threshold from your reference code
-        if best_cat and max_sim >= 0.7:
+        if best_cat and max_sim >= 0.8:
             newly_classified.append({
                 "id": contour_obj['id'],
                 "category": best_cat

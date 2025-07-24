@@ -90,11 +90,11 @@ class Results:
             #     streamlines.tube(radius=0.01), scalars='U'
             # )
 
-            plotter_vel.add_mesh(
-                original_slice,
-                scalars='U',
-                lighting=False,
-            )
+            # plotter_vel.add_mesh(
+            #     original_slice,
+            #     scalars='U',
+            #     lighting=False,
+            # )
 
             plotter_vel.add_mesh(
                 pv.merge(surfs),
